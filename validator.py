@@ -127,13 +127,26 @@ def lat_long_zip(country, c_data, output_lines):
     except Exception as e:
         output_lines.append(f"[ERROR] lat_long_zip() failed: {e}")
 
+
 #-------Check empty & Special Character-----
 def check_empty(c_data, output_lines):
-    special_pattern = r'[^a-zA-Z0-9\s]' 
-    
     try:
         cols_to_check = ['Category', 'Product', 'Price', 'Product Id', 'Store ID', 'Store Name',
                          'Store Address', 'City', 'State', 'Country', 'Latitude', 'Longitude']
+        
+        # Special patterns for each column to allow specific symbols
+        allowed_symbols = {
+            'Category': r'[^a-zA-Z0-9\s,\'\.\-&$]',  # Allow , . - & $ in Category
+            'Product': r'[^a-zA-Z0-9\s,\'\.\-&$]',  # Allow , . - & $ in Product
+            'Unique Product': r'[^a-zA-Z0-9\s,\'\.\-&$]',  # Allow , . - & $ in Unique Product
+            'Price': r'[^0-9.]',  # Allow only numbers and . in Price
+            'Store Name': r'[^a-zA-Z0-9\s,\'\.\-&,]',  # Allow , . - & in Store Name
+            'Store Address': r'[^a-zA-Z0-9\s,\'\.\-&,]',  # Allow , . - & in Store Address
+            'Latitude': r'[^0-9\.\-]',  # Allow only numbers and . - in Latitude
+            'Longitude': r'[^0-9\.\-]',  # Allow only numbers and . - in Longitude
+            'Store ID': r'[^a-zA-Z0-9]',  # Allow alphanumeric for Store ID (no special characters)
+            'Product Id': r'[^a-zA-Z0-9]',  # Allow alphanumeric for Product ID (no special characters)
+        }
 
         # Check if required columns exist in c_data
         missing_cols = [col for col in cols_to_check if col not in c_data.columns]
@@ -146,18 +159,29 @@ def check_empty(c_data, output_lines):
             if col not in c_data.columns:
                 continue  # Skip if the column doesn't exist
 
-            empty_mask = c_data[col].astype(str).str.strip().replace('nan', '').eq('')
-            if empty_mask.any():
-                store_ids = c_data.loc[empty_mask, 'Store ID'].dropna().unique()
-                output_lines.append(f"Empty or null '{col}' values in Store IDs: {list(store_ids)}")
+            try:
+                # Convert column to string for all values before applying any string operations
+                c_data[col] = c_data[col].astype(str)
 
-            # Special character checking for non-'Store Address' columns
-            if col != 'Store Address':
-                special_chars = c_data[c_data[col].str.contains(special_pattern, regex=True, na=False)]
-                if not special_chars.empty:
-                    store_ids_schars = special_chars['Store ID'].drop_duplicates().tolist()
-                    output_lines.append(f"Special character found in '{col}' for Store IDs: {store_ids_schars}")
+                # Apply strip() element-wise (remove leading/trailing spaces)
+                c_data[col] = c_data[col].str.strip().replace('nan', '')
 
+                empty_mask = c_data[col].eq('')
+                if empty_mask.any():
+                    store_ids = c_data.loc[empty_mask, 'Store ID'].dropna().unique()
+                    output_lines.append(f"Empty or null '{col}' values in Store IDs: {list(store_ids)}")
+
+                # Special character checking based on allowed symbols for each column
+                if col in allowed_symbols:
+                    special_pattern = allowed_symbols[col]
+                    special_chars = c_data[c_data[col].str.contains(special_pattern, regex=True, na=False)]
+                    if not special_chars.empty:
+                        store_ids_schars = special_chars['Store ID'].drop_duplicates().tolist()
+                        output_lines.append(f"Special character found in '{col}' for Store IDs: {store_ids_schars}")
+
+            except Exception as e:
+                output_lines.append(f"[ERROR] Issue processing column '{col}': {str(e)}")
+        
         # Check for zero values in Price column
         if 'Price' in c_data.columns:
             c_data['Price'] = pd.to_numeric(c_data['Price'], errors='coerce')
@@ -169,7 +193,8 @@ def check_empty(c_data, output_lines):
     except Exception as e:
         output_lines.append(f"[ERROR] check_empty() failed: {str(e)}")
 
-
+        
+#----Store Id not in Current
 def not_in_prev(c_data, p_data, output_lines):
     unique_c_ids = c_data['Store ID'].unique()
     unique_p_ids = p_data['Store ID'].unique()
@@ -251,7 +276,7 @@ def run_validation(ip1, ip2, country="Germany", output_path="output_summary.txt"
         # Validate lat/long and zip
         lat_long_zip(country, c_data, output_lines)
 
-        # Empty checks
+        #-------Check empty & Special Character-----
         check_empty(c_data, output_lines)
 
         # Duplicate Product check
