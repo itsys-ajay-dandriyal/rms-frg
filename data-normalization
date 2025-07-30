@@ -1,0 +1,50 @@
+def normalize_column_name(col):
+    import re
+    col = col.lower()
+    col = re.sub(r'[^a-z0-9]', '', col)
+    return col
+
+def standardize_columns(df):
+    col_mapping = {
+        'storeid': 'Store ID',
+        'store_id': 'Store ID',
+        'storeidnumber': 'Store ID',
+        'category': 'Category',
+        'product': 'Product',
+        'productid': 'Product Id',
+        'product_id': 'Product Id',
+        'storeaddress': 'Store Address',
+        'storename': 'Store Name',
+        'zipcode': 'Zip Code',
+        'zip': 'Zip Code',
+        'country': 'Country',
+        'latitude': 'Latitude',
+        'longitude': 'Longitude',
+        'producturl': 'Product Url',
+        'tmadid': 'TMAD_ID',
+        'pcid': 'PC_ID',
+        'pcaddress': 'PC_Address',
+        'tricityid': 'TRICITY_ID',
+        'caseysid': 'Caseys_Id',
+        'uniqueproduct': 'Unique Product',
+        'currency': 'Currency',
+        'dateextracted': 'DateExtracted',
+        'competitor': 'Competitor',
+        'type': 'Type',
+        'subtypesize': 'SubType / Size'
+        # Add more mappings if needed
+    }
+
+    df.columns = [col_mapping.get(normalize_column_name(col), col.strip()) for col in df.columns]
+    return df
+
+
+# Load and normalize both files
+        c_data = pd.read_csv(ip1, sep=delimiter, dtype=str)
+        c_data = standardize_columns(c_data)
+
+        p_data = pd.read_csv(ip2, sep=delimiter, dtype=str)
+        p_data = standardize_columns(p_data)
+
+
+      
