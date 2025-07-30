@@ -1,8 +1,6 @@
 import pandas as pd
-import numpy as np
 import os
-import re
-
+import traceback
 
 def detect_delimiter(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -14,6 +12,52 @@ def detect_delimiter(file_path):
         else:
             return ','
 
+#--file type & distinct count & symbol check--
+def type_of_file(c_data, p_data, output_lines, ftype):
+    if ftype == 'RMS':
+        allowed_symbols = {
+            'Unique Product': r'[^a-zA-Z0-9\s,\'\.\-&$]',
+            'Currency': r'[^a-zA-Z]',
+        }
+        print("File format is RMS")
+    elif ftype == 'TRICITY':
+        allowed_symbols = {
+            'TRICITY_ID': r'[^a-zA-Z0-9,\-]'
+        }
+        output_lines.append(f"Distinct Count(Tricity id): Current: {c_data['TRICITY_ID'].nunique()}, Previous: {p_data['TRICITY_ID'].nunique()}") 
+    elif ftype == 'TMAD':
+        allowed_symbols = {
+            'TMAD_ID': r'[^a-zA-Z0-9,\-]',
+            'Currency': r'[^a-zA-Z]'
+        }
+        output_lines.append(f"Distinct Count(TMAD id): Current: {c_data['TMAD_ID'].nunique()}, Previous: {p_data['TMAD_ID'].nunique()}")
+    elif ftype == 'POLLO_CAMPERO':
+        allowed_symbols = {
+            'PC_ID': r'[^a-zA-Z0-9,\-]',
+            'PC_Address': r'[^a-zA-Z0-9\s,\/\'\.\-&,]'
+        }
+        output_lines.append(f"Distinct Count(POLLO id): Current: {c_data['PC_ID'].nunique()}, Previous: {p_data['PC_ID'].nunique()}")
+    elif ftype == 'Caseys':
+        allowed_symbols = {
+            'Caseys_Id' : r'[^a-zA-Z0-9,\-]'
+        }
+        output_lines.append(f"Distinct Count(Caseys id): Current: {c_data['Caseys_Id'].nunique()}, Previous: {p_data['Caseys_Id'].nunique()}")
+
+
+    for col, pattern in allowed_symbols.items():
+        if col not in c_data.columns:
+            output_lines.append(f"[WARN] Column '{col}' not found for symbol check.")
+            continue
+
+        try:
+            c_data[col] = c_data[col].astype(str).str.strip().replace('nan', '')
+            bad_rows = c_data[c_data[col].str.contains(pattern, regex=True, na=False)]
+
+            if not bad_rows.empty:
+                store_ids = bad_rows['Store ID'].drop_duplicates().tolist()
+                output_lines.append(f"Special character found in '{col}' for Store IDs: {store_ids}")
+        except Exception as e:
+            output_lines.append(f"[ERROR] Issue processing column '{col}' during symbol check: {str(e)}")
 
 #------Category not in current data------
 def cat_not_in(c_data, p_data, output_lines):
@@ -54,6 +98,7 @@ def cat_not_in(c_data, p_data, output_lines):
         output_lines.append(f"Unexpected error: {e}")
 
 
+#-------Check For Valid Lat, Long--------
 def lat_long_zip(country, c_data, output_lines):
     try:
         bounds = {
@@ -129,72 +174,85 @@ def lat_long_zip(country, c_data, output_lines):
 
 
 #-------Check empty & Special Character-----
-def check_empty(c_data, output_lines):
-    try:
-        cols_to_check = ['Category', 'Product', 'Price', 'Product Id', 'Store ID', 'Store Name',
-                         'Store Address', 'City', 'State', 'Country', 'Latitude', 'Longitude']
+def check_null_values(c_data, output_lines, ftype):
+    cols_to_check = ['Category', 'Product', 'Price', 'Product Id', 'Store ID', 'Store Name',
+                     'Store Address', 'City', 'State', 'Zip Code', 'Country', 'Latitude', 'Longitude', 'Product Url']
+    
+    if ftype == 'RMS':
+        output_lines.append("File type RMS")
+        cols_to_check.extend(['Unique Product', 'Currency'])
+    elif ftype == 'TMAD':
+        output_lines.append("File type TMAD")
+        cols_to_check.extend(['TMAD_ID', 'Currency'])
+    elif ftype == 'POLLO_CAMPERO':
+        output_lines.append("File type POLLO CAMPERO")
+        cols_to_check.extend(['PC_ID', 'PC_Address'])
+    elif ftype == 'TRICITY':
+        output_lines.append("File type TRICITY")
+        cols_to_check.append('TRICITY_ID') 
+    elif ftype == 'Caseys':
+        output_lines.append("File type Caseys")
+        cols_to_check.append('Caseys_Id')           
+
+    missing_cols = [col for col in cols_to_check if col not in c_data.columns]
+    if missing_cols:
+        for col in missing_cols:
+            output_lines.append(f"[WARN] Column '{col}' not found in dataset.")
+
+    for col in cols_to_check:
+        if col not in c_data.columns:
+            continue
+
+        try:
+            c_data[col] = c_data[col].astype(str).str.strip().replace('nan', '')
+            empty_mask = c_data[col].eq('')
+            if empty_mask.any():
+                store_ids = c_data.loc[empty_mask, 'Store ID'].dropna().unique()
+                output_lines.append(f"Empty or null '{col}' values in Store IDs: {list(store_ids)}")
         
-        # Special patterns for each column to allow specific symbols
-        allowed_symbols = {
-            'Category': r'[^a-zA-Z0-9\s,\'\.\-&$]',  # Allow , . - & $ in Category
-            'Product': r'[^a-zA-Z0-9\s,\'\.\-&$]',  # Allow , . - & $ in Product
-            'Unique Product': r'[^a-zA-Z0-9\s,\'\.\-&$]',  # Allow , . - & $ in Unique Product
-            'Price': r'[^0-9.]',  # Allow only numbers and . in Price
-            'Store Name': r'[^a-zA-Z0-9\s,\'\.\-&,]',  # Allow , . - & in Store Name
-            'Store Address': r'[^a-zA-Z0-9\s,\'\.\-&,]',  # Allow , . - & in Store Address
-            'Latitude': r'[^0-9\.\-]',  # Allow only numbers and . - in Latitude
-            'Longitude': r'[^0-9\.\-]',  # Allow only numbers and . - in Longitude
-            'Store ID': r'[^a-zA-Z0-9]',  # Allow alphanumeric for Store ID (no special characters)
-            'Product Id': r'[^a-zA-Z0-9]',  # Allow alphanumeric for Product ID (no special characters)
-        }
+            if 'Price' in c_data.columns:
+                c_data['Price'] = pd.to_numeric(c_data['Price'], errors='coerce')
+                zero_mask = c_data['Price'] == 0
+                if zero_mask.any():
+                    ids = c_data.loc[zero_mask, 'Store ID'].dropna().unique()
+                    output_lines.append(f"Zero Price found for Store IDs: {list(ids)}")
 
-        # Check if required columns exist in c_data
-        missing_cols = [col for col in cols_to_check if col not in c_data.columns]
-        if missing_cols:
-            for col in missing_cols:
-                output_lines.append(f"[WARN] Column '{col}' not found in dataset.")
+        except Exception as e:
+            output_lines.append(f"[ERROR] Issue processing column '{col}' during null check: {str(e)}")
+
+
+# --------Check for unwanted Symbol-------
+def check_symbol_violations(c_data, output_lines):
+    # Define regex patterns to find **disallowed** characters
+    allowed_symbols = {
+        'Category': r'[^a-zA-Z0-9\s,\'\.\-&$]',
+        'Product': r'[^a-zA-Z0-9\s,\'\.\-&$]',
+        'Price': r'[^0-9.]',
+        'Store Name': r'[^a-zA-Z0-9\s,\/\'\.\-&,]',
+        'Store Address': r'[^a-zA-Z0-9\s,\/\'\.\-&,]',
+        'Latitude': r'[^0-9\.\-]',
+        'Longitude': r'[^0-9\.\-]',
+        'Store ID': r'[^a-zA-Z0-9,\-]',
+        'Product Id': r'[^a-zA-Z0-9,\-]'
+    }
+
+    for col, pattern in allowed_symbols.items():
+        if col not in c_data.columns:
+            output_lines.append(f"[WARN] Column '{col}' not found for symbol check.")
+            continue
+
+        try:
+            c_data[col] = c_data[col].astype(str).str.strip().replace('nan', '')
+            bad_rows = c_data[c_data[col].str.contains(pattern, regex=True, na=False)]
+
+            if not bad_rows.empty:
+                store_ids = bad_rows['Store ID'].drop_duplicates().tolist()
+                output_lines.append(f"Special character found in '{col}' for Store IDs: {store_ids}")
+        except Exception as e:
+            output_lines.append(f"[ERROR] Issue processing column '{col}' during symbol check: {str(e)}")
         
-        # Check for empty or null values in specified columns
-        for col in cols_to_check:
-            if col not in c_data.columns:
-                continue  # Skip if the column doesn't exist
 
-            try:
-                # Convert column to string for all values before applying any string operations
-                c_data[col] = c_data[col].astype(str)
-
-                # Apply strip() element-wise (remove leading/trailing spaces)
-                c_data[col] = c_data[col].str.strip().replace('nan', '')
-
-                empty_mask = c_data[col].eq('')
-                if empty_mask.any():
-                    store_ids = c_data.loc[empty_mask, 'Store ID'].dropna().unique()
-                    output_lines.append(f"Empty or null '{col}' values in Store IDs: {list(store_ids)}")
-
-                # Special character checking based on allowed symbols for each column
-                if col in allowed_symbols:
-                    special_pattern = allowed_symbols[col]
-                    special_chars = c_data[c_data[col].str.contains(special_pattern, regex=True, na=False)]
-                    if not special_chars.empty:
-                        store_ids_schars = special_chars['Store ID'].drop_duplicates().tolist()
-                        output_lines.append(f"Special character found in '{col}' for Store IDs: {store_ids_schars}")
-
-            except Exception as e:
-                output_lines.append(f"[ERROR] Issue processing column '{col}': {str(e)}")
-        
-        # Check for zero values in Price column
-        if 'Price' in c_data.columns:
-            c_data['Price'] = pd.to_numeric(c_data['Price'], errors='coerce')
-            zero_mask = c_data['Price'] == 0
-            if zero_mask.any():
-                ids = c_data.loc[zero_mask, 'Store ID'].dropna().unique()
-                output_lines.append(f"Zero Price found for Store IDs: {list(ids)}")
-
-    except Exception as e:
-        output_lines.append(f"[ERROR] check_empty() failed: {str(e)}")
-
-        
-#----Store Id not in Current
+#----Store Id not in Current----------
 def not_in_prev(c_data, p_data, output_lines):
     unique_c_ids = c_data['Store ID'].unique()
     unique_p_ids = p_data['Store ID'].unique()
@@ -220,7 +278,7 @@ def check_duplicate_products(c_data, output_lines):
         output_lines.append(f"[WARN] Missing columns for product duplicate check: {missing}")
 
 
-def run_validation(ip1, ip2, country="Germany", output_path="output_summary.txt"):
+def run_validation(ip1, ip2, country, output_path, ftype):
     output_lines = []
     try:
         # Detect delimiter
@@ -252,12 +310,9 @@ def run_validation(ip1, ip2, country="Germany", output_path="output_summary.txt"
                 output_lines.append(f"✅ Competitor: {c_comp[0]}")
 
         #----Counts_of_Data----
+        output_lines.append(f"Total Count->   Current: {c_data.shape},  Previous: {p_data.shape}")
         
-        output_lines.append(f"Current data shape: {c_data.shape}")
-        output_lines.append(f"Previous data shape: {p_data.shape}")
-
-        output_lines.append(f"Current distinct Store IDs: {c_data['Store ID'].nunique()}")
-        output_lines.append(f"Previous distinct Store IDs: {p_data['Store ID'].nunique()}")
+        output_lines.append(f"Distinct(Store IDs)->   Current: {c_data['Store ID'].nunique()},  Previous: {p_data['Store ID'].nunique()}")
         
         # Data count difference
         try:
@@ -273,15 +328,31 @@ def run_validation(ip1, ip2, country="Germany", output_path="output_summary.txt"
         except Exception as e:
             output_lines.append(f"[ERROR] Calculating data difference: {e}")
 
+
+        if ftype == 'FRG':
+            output_lines.append("file type is FRG")
+        else:
+        #Check file type and Distinct count of specific ID
+            type_of_file(c_data, p_data, output_lines, ftype)
+
+        if c_data['Country'].nunique() > 1:
+            output_lines.append("❌ Country more then one")
+
+
         # Validate lat/long and zip
         lat_long_zip(country, c_data, output_lines)
 
-        #-------Check empty & Special Character-----
-        check_empty(c_data, output_lines)
+        # Check for null values 
+        check_null_values(c_data, output_lines, ftype)
 
-        # Duplicate Product check
+
+        #Check for Special Symbol--
+        check_symbol_violations(c_data, output_lines)
+
+        # Duplicate Product check---
         check_duplicate_products(c_data, output_lines)
 
+        # Store ID not in current---
         not_in_prev(c_data, p_data, output_lines)
 
         #-----Category not in current----
@@ -295,6 +366,7 @@ def run_validation(ip1, ip2, country="Germany", output_path="output_summary.txt"
         output_lines.append(f"Dates of Scraping: {', '.join(unique_date)}")
 
     except Exception as main_err:
+        traceback.print_exc()
         output_lines.append(f"[FATAL ERROR] Validation failed: {main_err}")
 
     # Write to output file
