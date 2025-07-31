@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import traceback
+import re
 
 def detect_delimiter(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -11,6 +12,45 @@ def detect_delimiter(file_path):
             return '\t'
         else:
             return ','
+
+def normalize_column_name(col):
+    col = col.lower()
+    col = re.sub(r'[^a-z0-9]', '', col)
+    return col
+
+def standardize_columns(df):
+    col_mapping = {
+        'storeid': 'Store ID',
+        'store_id': 'Store ID',
+        'storeidnumber': 'Store ID',
+        'category': 'Category',
+        'product': 'Product',
+        'productid': 'Product Id',
+        'product_id': 'Product Id',
+        'storeaddress': 'Store Address',
+        'storename': 'Store Name',
+        'zipcode': 'Zip Code',
+        'zip': 'Zip Code',
+        'country': 'Country',
+        'latitude': 'Latitude',
+        'longitude': 'Longitude',
+        'producturl': 'Product Url',
+        'tmadid': 'TMAD_ID',
+        'pcid': 'PC_ID',
+        'pcaddress': 'PC_Address',
+        'tricityid': 'TRICITY_ID',
+        'caseysid': 'Caseys_Id',
+        'uniqueproduct': 'Unique Product',
+        'currency': 'Currency',
+        'dateextracted': 'DateExtracted',
+        'competitor': 'Competitor',
+        'type': 'Type',
+        'subtypesize': 'SubType / Size'
+        # Add more mappings if needed
+    }
+
+    df.columns = [col_mapping.get(normalize_column_name(col), col.strip()) for col in df.columns]
+    return df
 
 #--file type & distinct count & symbol check--
 def type_of_file(c_data, p_data, output_lines, ftype):
