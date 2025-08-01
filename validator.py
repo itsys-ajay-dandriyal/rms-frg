@@ -45,7 +45,8 @@ def standardize_columns(df):
         'dateextracted': 'DateExtracted',
         'competitor': 'Competitor',
         'type': 'Type',
-        'subtypesize': 'SubType / Size'
+        'subtypesize': 'SubType / Size',
+        'subtype' : 'SubType / Size'
         # Add more mappings if needed
     }
 
@@ -99,6 +100,7 @@ def type_of_file(c_data, p_data, output_lines, ftype):
         except Exception as e:
             output_lines.append(f"[ERROR] Issue processing column '{col}' during symbol check: {str(e)}")
 
+
 #------Category not in current data------
 def cat_not_in(c_data, p_data, output_lines):
     try:
@@ -148,7 +150,7 @@ def lat_long_zip(country, c_data, output_lines):
             "UK": (49.9, 58.6, -8.15, 1.8),
             "CA": (41.7, 83.1, -141.0, -52.6),
             "PH": (4.5, 21.3, 116.9, 126.6),
-            "NZ":(-47.3, 166.4, -34.4, 178.6),
+            'NZ':(-47.3, 166.4, -34.4, 178.6),
             "AUS": (-43.6, -10.0, 113.3, 153.6),
             "FRA": (41.3, 51.1, -5.2, 9.6)
         }.get(country, (None, None, None, None))
@@ -251,21 +253,22 @@ def check_null_values(c_data, output_lines, ftype):
             if empty_mask.any():
                 store_ids = c_data.loc[empty_mask, 'Store ID'].dropna().unique()
                 output_lines.append(f"Empty or null '{col}' values in Store IDs: {list(store_ids)}")
+        
 
-             except Exception as e:
-            output_lines.append(f"[ERROR] Issue processing column '{col}' during null check: {str(e)}")
-        try: 
-            if 'Price' in c_data.columns:
-                c_data['Price'] = pd.to_numeric(c_data['Price'], errors='coerce')
-                zero_mask = c_data['Price'] == 0
-                if zero_mask.any():
-                    ids = c_data.loc[zero_mask, 'Store ID'].dropna().unique()
-                    output_lines.append(f"Zero Price found for Store IDs: {list(ids)}")
         except Exception as e:
-            output_lines.append("Error in Price null check: {e}")              
+            output_lines.append(f"[ERROR] Issue processing column '{col}' during null check: {str(e)}")
+    try:
+        if 'Price' in c_data.columns:
+            c_data['Price'] = pd.to_numeric(c_data['Price'], errors='coerce')
+            zero_mask = c_data['Price'] == 0
+            
+            if zero_mask.any():
+                ids = c_data.loc[zero_mask, 'Store ID'].dropna().unique()
+                output_lines.append(f"Zero Price found for Store IDs: {list(ids)}")
+    except Exception as e:
+        output_lines.append("Error in Price null check: {e}")            
 
-       
-
+        
 
 # --------Check for unwanted Symbol-------
 def check_symbol_violations(c_data, output_lines):
@@ -330,9 +333,12 @@ def run_validation(ip1, ip2, country, output_path, ftype):
         # Detect delimiter
         delimiter = detect_delimiter(ip1)
 
-        # Load data
+        # Load and normalize both files
         c_data = pd.read_csv(ip1, sep=delimiter, dtype=str)
+        c_data = standardize_columns(c_data)
+
         p_data = pd.read_csv(ip2, sep=delimiter, dtype=str)
+        p_data = standardize_columns(p_data)
 
         output_lines.append(f"✅ Files loaded successfully using delimiter: '{delimiter}'")
         
@@ -425,6 +431,6 @@ def run_validation(ip1, ip2, country, output_path, ftype):
 
     return os.path.abspath(output_path)
 
-# ip1 = r"C:\Users\ITSYS-PC13\Documents\validation\rbi\RBI_McDonalds_DE_07\2025_07_McDonalds_DE.csv"
-# ip2 = r"C:\Users\ITSYS-PC13\Documents\validation\rbi\RBI_McDonalds_DE_07\2025_04_McDonalds_DE.csv"
-# run_validation(ip1, ip2, country="Germany", output_path="output_summary.txt")
+# ip1 = r"C:\Users\ITSYS-PC13\Desktop\panda_validator\2025_08_McDonalds.csv"
+# ip2 = r"C:\Users\ITSYS-PC13\Desktop\panda_validator\2025_07_McDonalds.csv"
+# run_validation(ip1, ip2, country="USA", output_path="output_summary.txt", ftype='FRG')
