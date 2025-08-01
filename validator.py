@@ -148,6 +148,7 @@ def lat_long_zip(country, c_data, output_lines):
             "UK": (49.9, 58.6, -8.15, 1.8),
             "CA": (41.7, 83.1, -141.0, -52.6),
             "PH": (4.5, 21.3, 116.9, 126.6),
+            "NZ":(-47.3, 166.4, -34.4, 178.6),
             "AUS": (-43.6, -10.0, 113.3, 153.6),
             "FRA": (41.3, 51.1, -5.2, 9.6)
         }.get(country, (None, None, None, None))
@@ -191,6 +192,7 @@ def lat_long_zip(country, c_data, output_lines):
             "UK": r"^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$",
             "CA": r"^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$",
             "PH": r"^\d{4}$",
+            "NZ": r"^\d{4}$",
             "AUS": r"^\d{4}$",
             "FRA": r"^\d{5}$"
         }.get(country, r".*")
@@ -249,16 +251,20 @@ def check_null_values(c_data, output_lines, ftype):
             if empty_mask.any():
                 store_ids = c_data.loc[empty_mask, 'Store ID'].dropna().unique()
                 output_lines.append(f"Empty or null '{col}' values in Store IDs: {list(store_ids)}")
-        
+
+             except Exception as e:
+            output_lines.append(f"[ERROR] Issue processing column '{col}' during null check: {str(e)}")
+        try: 
             if 'Price' in c_data.columns:
                 c_data['Price'] = pd.to_numeric(c_data['Price'], errors='coerce')
                 zero_mask = c_data['Price'] == 0
                 if zero_mask.any():
                     ids = c_data.loc[zero_mask, 'Store ID'].dropna().unique()
                     output_lines.append(f"Zero Price found for Store IDs: {list(ids)}")
-
         except Exception as e:
-            output_lines.append(f"[ERROR] Issue processing column '{col}' during null check: {str(e)}")
+            output_lines.append("Error in Price null check: {e}")              
+
+       
 
 
 # --------Check for unwanted Symbol-------
