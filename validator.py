@@ -60,7 +60,6 @@ def type_of_file(c_data, p_data, output_lines, ftype):
             'Unique Product': r'[^a-zA-Z0-9\s,\'\.\-&$]',
             'Currency': r'[^a-zA-Z]',
         }
-        print("File format is RMS")
     elif ftype == 'TRICITY':
         allowed_symbols = {
             'TRICITY_ID': r'[^a-zA-Z0-9,\-]'
@@ -253,10 +252,9 @@ def check_null_values(c_data, output_lines, ftype):
             if empty_mask.any():
                 store_ids = c_data.loc[empty_mask, 'Store ID'].dropna().unique()
                 output_lines.append(f"Empty or null '{col}' values in Store IDs: {list(store_ids)}")
-        
-
         except Exception as e:
             output_lines.append(f"[ERROR] Issue processing column '{col}' during null check: {str(e)}")
+
     try:
         if 'Price' in c_data.columns:
             c_data['Price'] = pd.to_numeric(c_data['Price'], errors='coerce')
@@ -266,9 +264,7 @@ def check_null_values(c_data, output_lines, ftype):
                 ids = c_data.loc[zero_mask, 'Store ID'].dropna().unique()
                 output_lines.append(f"Zero Price found for Store IDs: {list(ids)}")
     except Exception as e:
-        output_lines.append("Error in Price null check: {e}")            
-
-        
+        output_lines.append(f"[ERROR] Price null check failed: {e}")        
 
 # --------Check for unwanted Symbol-------
 def check_symbol_violations(c_data, output_lines):
@@ -330,10 +326,10 @@ def check_duplicate_products(c_data, output_lines):
 def run_validation(ip1, ip2, country, output_path, ftype):
     output_lines = []
     try:
-        # Detect delimiter
+        output_lines.append("============STARTING VALIDATION ===========")
+
         delimiter = detect_delimiter(ip1)
 
-        # Load and normalize both files
         c_data = pd.read_csv(ip1, sep=delimiter, dtype=str)
         c_data = standardize_columns(c_data)
 
@@ -341,15 +337,15 @@ def run_validation(ip1, ip2, country, output_path, ftype):
         p_data = standardize_columns(p_data)
 
         output_lines.append(f"✅ Files loaded successfully using delimiter: '{delimiter}'")
-        
-        # Drop full duplicates
+
         if c_data.duplicated().any():
             dup_rows = c_data[c_data.duplicated()]
             output_lines.append(f"⚠️ Duplicate rows found in current data: {len(dup_rows)}")
             output_lines.append(dup_rows.to_string(index=False))
             c_data = c_data.drop_duplicates()
 
-        #-----Competitor_check-----
+        # Competitor Check
+        output_lines.append("\n-------- Start: Competitor Check --------")
         if 'Competitor' not in c_data.columns or 'Competitor' not in p_data.columns:
             output_lines.append("[WARN] Competitor column missing in one or both files.")
         else:
@@ -360,13 +356,12 @@ def run_validation(ip1, ip2, country, output_path, ftype):
                 output_lines.append(f"Current: {list(c_comp)} | Previous: {list(p_comp)}")
             else:
                 output_lines.append(f"✅ Competitor: {c_comp[0]}")
+        output_lines.append("--------- End: Competitor Check ---------\n")
 
-        #----Counts_of_Data----
+        # Data Counts
         output_lines.append(f"Total Count->   Current: {c_data.shape},  Previous: {p_data.shape}")
-        
         output_lines.append(f"Distinct(Store IDs)->   Current: {c_data['Store ID'].nunique()},  Previous: {p_data['Store ID'].nunique()}")
-        
-        # Data count difference
+
         try:
             total_rows = c_data.shape[0] + p_data.shape[0]
             if total_rows == 0:
@@ -380,48 +375,53 @@ def run_validation(ip1, ip2, country, output_path, ftype):
         except Exception as e:
             output_lines.append(f"[ERROR] Calculating data difference: {e}")
 
-
         if ftype == 'FRG':
             output_lines.append("file type is FRG")
         else:
-        #Check file type and Distinct count of specific ID
+            output_lines.append("\n------ Start: File Type Check ---------")
             type_of_file(c_data, p_data, output_lines, ftype)
+            output_lines.append("------ End: File Type Check -----------\n")
 
         if c_data['Country'].nunique() > 1:
-            output_lines.append("❌ Country more then one")
+            output_lines.append("❌ Country more than one")
 
-
-        # Validate lat/long and zip
+        # Sectioned function calls
+        output_lines.append("\n------- Start: Latitude/Longitude/ZIP Check ------")
         lat_long_zip(country, c_data, output_lines)
+        output_lines.append("----- End: Latitude/Longitude/ZIP Check -----\n")
 
-        # Check for null values 
+        output_lines.append("\n------ Start: Null Value Check ------")
         check_null_values(c_data, output_lines, ftype)
+        output_lines.append("------ End: Null Value Check ------\n")
 
-
-        #Check for Special Symbol--
+        output_lines.append("\n----- Start: Symbol Violation Check -----")
         check_symbol_violations(c_data, output_lines)
+        output_lines.append("----- End: Symbol Violation Check ------\n")
 
-        # Duplicate Product check---
+        output_lines.append("\n------ Start: Duplicate Product Check ----")
         check_duplicate_products(c_data, output_lines)
+        output_lines.append("----- End: Duplicate Product Check -----\n")
 
-        # Store ID not in current---
+        output_lines.append("\n----- Start: Store ID Not in Current -----")
         not_in_prev(c_data, p_data, output_lines)
+        output_lines.append("----- End: Store ID Not in Current -----\n")
 
-        #-----Category not in current----
+        output_lines.append("\n--- Start: Category Not in Current ---")
         cat_not_in(c_data, p_data, output_lines)
+        output_lines.append("--- End: Category Not in Current ---\n")
 
-
-        #---- Date Extracted ------
+        # DateExtracted check
         unique_dates = c_data['DateExtracted'].unique()
         unique_date = [udate.split()[0] for udate in unique_dates]
         unique_date = list(set(unique_date))
         output_lines.append(f"Dates of Scraping: {', '.join(unique_date)}")
 
+        output_lines.append("===== VALIDATION COMPLETE =====")
+
     except Exception as main_err:
         traceback.print_exc()
         output_lines.append(f"[FATAL ERROR] Validation failed: {main_err}")
 
-    # Write to output file
     try:
         with open(output_path, 'w', encoding='utf-8') as f:
             for line in output_lines:
@@ -430,7 +430,6 @@ def run_validation(ip1, ip2, country, output_path, ftype):
         output_lines.append(f"[ERROR] Could not write log file: {file_err}")
 
     return os.path.abspath(output_path)
-
-# ip1 = r"C:\Users\ITSYS-PC13\Desktop\panda_validator\2025_08_McDonalds.csv"
-# ip2 = r"C:\Users\ITSYS-PC13\Desktop\panda_validator\2025_07_McDonalds.csv"
-# run_validation(ip1, ip2, country="USA", output_path="output_summary.txt", ftype='FRG')
+# ip1 = r"C:\Users\ITSYS-PC13\Desktop\panda_validator\2025_08_Wendys.txt"
+# ip2 = r"C:\Users\ITSYS-PC13\Desktop\panda_validator\2025_07_Wendys.txt"
+# run_validation(ip1, ip2, country="USA", output_path="output_summary.txt", ftype='RMS')
