@@ -1,0 +1,284 @@
+import pandas as pd
+import os
+import traceback
+import re
+
+def detect_delimiter(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        sample = f.readline()
+        if '|' in sample:
+            return '|'
+        elif '\t' in sample:
+            return '\t'
+        else:
+            return ','
+
+def normalize_column_name(col):
+    col = col.lower()
+    col = re.sub(r'[^a-z0-9]', '', col)
+    return col
+
+def standardize_columns(df):
+    col_mapping = {
+        'storeid': 'StoreID',
+        'store_id': 'StoreID',
+        'storeidnumber': 'StoreID',
+        'storeaddress': 'StoreAddress',
+        'storename': 'StoreName',
+        'zipcode': 'Zipcode',
+        'zip': 'Zipcode',
+        'country': 'Country',
+        'latitude': 'Latitude',
+        'longitude': 'Longitude',
+        'locationurl': 'LocationURL',
+        'dateextracted': 'DateExtracted',
+        'retailer': 'Retailer'
+        # Add more mappings if needed
+    }
+
+    df.columns = [col_mapping.get(normalize_column_name(col), col.strip()) for col in df.columns]
+    return df
+
+#--distinct count of multiple retailer--
+def multiple_retailer(c_data, p_data, output_lines):
+    uniqueRetailer = c_data['Retailer'].unique()
+
+    for unique in uniqueRetailer:
+        output_lines.append(f"Distinct Count {unique} ->   Current: {c_data[c_data['Retailer'] == unique].shape},  Previous: {p_data[p_data['Retailer'] == unique].shape}")
+        output_lines.append(f"Distinct Count {unique} ->   Current: {c_data[c_data['Retailer'] == unique]['StoreID'].nunique()},  Previous: {p_data[p_data['Retailer'] == unique]['StoreID'].nunique()}")
+
+#-------Check For Valid Lat, Long--------
+def lat_long_zip(country, c_data, output_lines):
+    try:
+        bounds = {
+            "USA": (18.77, 71.5, -179.14, -66.93),
+            "India": (6.75, 35.5, 68.7, 97.4),
+            "Germany": (47.3, 55.1, 5.9, 15.0),
+            "UK": (49.9, 58.6, -8.15, 1.8),
+            "CA": (41.7, 83.1, -141.0, -52.6),
+            "PH": (4.5, 21.3, 116.9, 126.6),
+            'NZ':(-47.3, 166.4, -34.4, 178.6),
+            "AUS": (-43.6, -10.0, 113.3, 153.6),
+            "FRA": (41.3, 51.1, -5.2, 9.6)
+        }.get(country, (None, None, None, None))
+
+        if None in bounds:
+            output_lines.append(f"[WARN] No lat/long bounds defined for country: {country}")
+            return
+
+        c_data['Latitude'] = pd.to_numeric(c_data['Latitude'], errors='coerce')
+        c_data['Longitude'] = pd.to_numeric(c_data['Longitude'], errors='coerce')
+
+        invalid_lat = c_data[(c_data['Latitude'] < bounds[0]) | (c_data['Latitude'] > bounds[1])]
+        if not invalid_lat.empty:
+            invalid_lat = invalid_lat[['StoreID', 'Latitude']].drop_duplicates()
+            output_lines.append("Invalid Latitude entries:")
+            output_lines.extend(invalid_lat[['StoreID', 'Latitude']].astype(str).apply(
+                lambda x: f"StoreID: {x['StoreID']}, Latitude: {x['Latitude']}", axis=1).tolist())
+
+        invalid_long = c_data[(c_data['Longitude'] < bounds[2]) | (c_data['Longitude'] > bounds[3])]
+        if not invalid_long.empty:
+            invalid_long = invalid_long[['StoreID', 'Longitude']].drop_duplicates()
+            output_lines.append("Invalid Longitude entries:")
+            output_lines.extend(invalid_long[['StoreID', 'Longitude']].astype(str).apply(
+                lambda x: f"StoreID: {x['StoreID']}, Longitude: {x['Longitude']}", axis=1).tolist())
+
+        # Ensure ZIP column is string and cleaned
+        if 'Zipcode' in c_data.columns:
+            c_data['Zipcode'] = c_data['Zipcode'].astype(str).str.strip()
+
+        # Remove decimal ".0" if ZIPs came in as float strings
+        c_data['Zipcode'] = c_data['Zipcode'].str.replace(r'\.0$', '', regex=True)
+
+        # Pad ZIPs with leading 0s (especially for US ZIPs like 02108)
+        if country == "USA":
+            c_data['Zipcode'] = c_data['Zipcode'].str.zfill(5)
+
+        zip_regex = {
+            "USA": r"^\d{5}(-\d{4})?$",
+            "India": r"^\d{6}$",
+            "Germany": r"^\d{5}$",
+            "UK": r"^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$",
+            "CA": r"^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$",
+            "PH": r"^\d{4}$",
+            "NZ": r"^\d{4}$",
+            "AUS": r"^\d{4}$",
+            "FRA": r"^\d{5}$"
+        }.get(country, r".*")
+
+        # Filter invalid Zipcodes
+        invalid_zip = c_data[~c_data['Zipcode'].str.match(zip_regex, na=False)]
+
+        # Check if there are any invalid Zipcodes
+        if not invalid_zip.empty:
+            output_lines.append("Invalid Zipcodes found:")
+            # Create a list of StoreID and Zipcode combinations
+            unique_invalid_zips = invalid_zip[['StoreID', 'Zipcode']].drop_duplicates()
+            # Format the output and convert it into a list of strings
+            formatted_invalid_zips = unique_invalid_zips.apply(
+                lambda x: f"StoreID: {x['StoreID']}, Zip: {x['Zipcode']}", axis=1).tolist()
+            output_lines.extend(formatted_invalid_zips)
+
+
+    except Exception as e:
+        output_lines.append(f"[ERROR] lat_long_zip() failed: {e}")
+
+
+#-------Check empty & Special Character-----
+def check_null_values(c_data, output_lines, ftype):
+    cols_to_check = ['Retailer', 'Location', 'StoreID', 'StoreName','StoreAddress', 'StoreCity', 'StoreState', 'Zipcode',
+                       'Country', 'Latitude', 'Longitude', 'LocationURL', 'TotalReviews', 'StoreRating', 'Rating', 'ReviewTime', 'PostId', 'PostUrl', 'FlynnOwned', 'DateExtracted']   
+
+    missing_cols = [col for col in cols_to_check if col not in c_data.columns]
+    if missing_cols:
+        for col in missing_cols:
+            output_lines.append(f"[WARN] Column '{col}' not found in dataset.")
+
+    for col in cols_to_check:
+        if col not in c_data.columns:
+            continue
+
+        try:
+            c_data[col] = c_data[col].astype(str).str.strip().replace('nan', '')
+            empty_mask = c_data[col].eq('')
+            if empty_mask.any():
+                store_ids = c_data.loc[empty_mask, 'StoreID'].dropna().unique()
+                output_lines.append(f"Empty or null '{col}' values in StoreIDs: {list(store_ids)}")
+        except Exception as e:
+            output_lines.append(f"[ERROR] Issue processing column '{col}' during null check: {str(e)}")      
+
+
+# --------Check for unwanted Symbol-------
+def check_symbol_violations(c_data, output_lines):
+    # Define regex patterns to find **disallowed** characters
+    allowed_symbols = {
+        'StoreName': r'[^a-zA-Z0-9\s,\/\'\.\-&,]',
+        'StoreAddress': r'[^a-zA-Z0-9\s,\/\'\.\-&,]',
+        'Latitude': r'[^0-9\.\-]',
+        'Longitude': r'[^0-9\.\-]',
+        'TotalReviews': r'[^0-9]',
+        'StoreRating': r'[^0-9\.]',
+        'StoreID': r'[^a-zA-Z0-9,\-]',
+
+    }
+
+    for col, pattern in allowed_symbols.items():
+        if col not in c_data.columns:
+            output_lines.append(f"[WARN] Column '{col}' not found for symbol check.")
+            continue
+
+        try:
+            c_data[col] = c_data[col].astype(str).str.strip().replace('nan', '')
+            bad_rows = c_data[c_data[col].str.contains(pattern, regex=True, na=False)]
+
+            if not bad_rows.empty:
+                store_ids = bad_rows['StoreID'].drop_duplicates().tolist()
+                output_lines.append(f"Special character found in '{col}' for StoreIDs: {store_ids}")
+        except Exception as e:
+            output_lines.append(f"[ERROR] Issue processing column '{col}' during symbol check: {str(e)}")
+        
+
+#----StoreID not in Current----------
+def not_in_prev(c_data, p_data, output_lines):
+    unique_c_ids = c_data['StoreID'].unique()
+    unique_p_ids = p_data['StoreID'].unique()
+    
+    store_ids_not_in_current = [store_id for store_id in unique_p_ids if store_id not in unique_c_ids]
+
+    if store_ids_not_in_current:
+        output_lines.append(f"StoreIDs Not in Current Data: {store_ids_not_in_current}")
+
+def run_validation(ip1, ip2, country, output_path, ftype):
+    output_lines = []
+    try:
+        output_lines.append("============STARTING VALIDATION ===========")
+
+        delimiter = detect_delimiter(ip1)
+
+        c_data = pd.read_csv(ip1, sep=delimiter, dtype=str)
+        c_data = standardize_columns(c_data)
+
+        p_data = pd.read_csv(ip2, sep=delimiter, dtype=str)
+        p_data = standardize_columns(p_data)
+
+        output_lines.append(f"✅ Files loaded successfully using delimiter: '{delimiter}'")
+
+        if c_data.duplicated().any():
+            dup_rows = c_data[c_data.duplicated()]
+            output_lines.append(f"⚠️ Duplicate rows found in current data: {len(dup_rows)}")
+            output_lines.append(dup_rows.to_string(index=False))
+            c_data = c_data.drop_duplicates()
+
+        # Retailer Check
+        output_lines.append("\n-------- Start: Retailer Check --------")
+        if 'Retailer' not in c_data.columns or 'Retailer' not in p_data.columns:
+            output_lines.append("[WARN] Retailer column missing in one or both files.")
+        else:
+            c_comp = c_data['Retailer'].dropna().unique()
+            p_comp = p_data['Retailer'].dropna().unique()
+            if len(c_comp) != 1 or len(p_comp) != 1 or c_comp[0] != p_comp[0]:
+                multiple_retailer(c_data, p_data, output_lines)
+            else:
+                output_lines.append(f"✅ Retailer({ftype}): {c_comp[0]}")
+        output_lines.append("--------- End: Retailer Check ---------\n")
+
+        # Data Counts
+        output_lines.append(f"Total Count->   Current: {c_data.shape},  Previous: {p_data.shape}")
+        output_lines.append(f"Distinct(StoreIDs)->   Current: {c_data['StoreID'].nunique()},  Previous: {p_data['StoreID'].nunique()}")
+
+        try:
+            total_rows = c_data.shape[0] + p_data.shape[0]
+            if total_rows == 0:
+                output_lines.append("⚠️ Both datasets are empty.")
+            else:
+                diff_percent = ((c_data.shape[0] - p_data.shape[0]) / total_rows) * 100
+                if diff_percent > 0:
+                    output_lines.append(f"📈 Current data increased by {round(diff_percent, 2)}%")
+                else:
+                    output_lines.append(f"📉 Current data decreased by {abs(round(diff_percent, 2))}%")
+        except Exception as e:
+            output_lines.append(f"[ERROR] Calculating data difference: {e}")
+
+        if c_data['Country'].nunique() > 1:
+            output_lines.append("❌ Country more than one")
+
+        # Sectioned function calls
+        output_lines.append("\n------- Start: Latitude/Longitude/ZIP Check ------")
+        lat_long_zip(country, c_data, output_lines)
+        output_lines.append("----- End: Latitude/Longitude/ZIP Check -----\n")
+
+        output_lines.append("\n------ Start: Null Value Check ------")
+        check_null_values(c_data, output_lines, ftype)
+        output_lines.append("------ End: Null Value Check ------\n")
+
+        output_lines.append("\n----- Start: Symbol Violation Check -----")
+        check_symbol_violations(c_data, output_lines)
+        output_lines.append("----- End: Symbol Violation Check ------\n")
+
+        output_lines.append("\n----- Start: StoreID Not in Current -----")
+        not_in_prev(c_data, p_data, output_lines)
+        output_lines.append("----- End: StoreID Not in Current -----\n")
+
+        # DateExtracted check
+        unique_dates = c_data['DateExtracted'].unique()
+        unique_date = [udate.split()[0] for udate in unique_dates]
+        unique_date = list(set(unique_date))
+        output_lines.append(f"Dates of Scraping: {', '.join(unique_date)}")
+
+        output_lines.append("===== VALIDATION COMPLETE =====")
+
+    except Exception as main_err:
+        traceback.print_exc()
+        output_lines.append(f"[FATAL ERROR] Validation failed: {main_err}")
+
+    try:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            for line in output_lines:
+                f.write(str(line) + '\n')
+    except Exception as file_err:
+        output_lines.append(f"[ERROR] Could not write log file: {file_err}")
+
+    return os.path.abspath(output_path)
+# ip1 = r"C:\Users\ITSYS-PC13\Desktop\panda_validator\2025_08_Wendys.txt"
+# ip2 = r"C:\Users\ITSYS-PC13\Desktop\panda_validator\2025_07_Wendys.txt"
+# run_validation(ip1, ip2, country="USA", output_path="output_summary.txt", ftype='RMS')
